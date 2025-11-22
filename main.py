@@ -27,6 +27,15 @@ groups = []
 khôlles = {}
 semaine_collometre = {}
 
+no_kholles_embed = discord.Embed(
+    title="Aucune khôlle cette semaine",
+    description="Tu n'as pas de khôlles prévues pour cette semaine.",
+    colour=discord.Colour.green()
+)
+no_kholles_embed.set_footer(text="MP2I >>>> MPSI")
+no_kholles_embed.set_thumbnail(
+    url=url)
+
 
 def semaine_S():
     """Donne le dictionnaire de correspondance sur le colomètre ou None si elle n'y est pas"""
@@ -196,16 +205,7 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
         user_khôlles = kholles_semaines(user_id, semaine)
         target_day = None
     if not user_khôlles:
-        embed = discord.Embed(
-            title="Aucune khôlle cette semaine",
-            description="Tu n'as pas de khôlles prévues pour cette semaine.",
-            colour=discord.Colour.green()
-        )
-        embed.set_footer(text="MP2I >>>> MPSI")
-        embed.set_thumbnail(
-            url=url)
-        return embed
-
+        return no_kholles_embed
     embed = discord.Embed(
         title=f"Tes khôlles pour la semaine",
         description=f"Salut, {data["Members"][str(user_id)]["name"].split(" ")[1]}, voici les khôlles que tu as {f"pour la S_{semaine} (Semaine {semaine_collometre[semaine]} de l'année)" if not custom_char else custom_char} : ",
@@ -216,8 +216,6 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
             if day_to_num[kholle["jour"]] != target_day:
                 continue
         elif delta_day!=-1:
-            print(day_to_num[kholle["jour"]] - today != delta_day)
-            print(kholle["matiere"])
             if day_to_num[kholle["jour"]] - today != delta_day: # If delta day and day not in specified range
                 continue
         kholle_info = ""
@@ -233,11 +231,10 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
             name=f"{kholle['matiere']} avec {kholle['colleur']}",
             value=f"```\nLe {kholle['jour']} à {kholle['heure']}.\n" +  (f"En salle : {kholle['salle']}\n" if kholle['salle'] else "") + "```" + kholle_info,
         )
-        if delta_day!=-1:
-            print(embed.fields)
     if embed.fields == []:
         return 
     return embed
+
 
 @bot.event
 async def on_ready():
@@ -245,6 +242,7 @@ async def on_ready():
     semaine_S()
     await send_reminder_saturday()
     await send_reminder_2days_before()
+    await send_reminder_sameday()
     print(f'We have logged in as {bot.user}')
     await tree.sync(guild=None)
 
@@ -300,10 +298,9 @@ async def khôlles_cmd(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-        
-
     embed = await gen_kholle(user_id = interaction.user.id, semaine=semaine_actuelle())
-
+    if not embed:
+        embed = no_kholles_embed
     await interaction.response.send_message(embed=embed, ephemeral=True, view=select_week())
 
 @tree.command(name="calendrier", description="Créer un fichier ICS de tes colles")
@@ -386,17 +383,7 @@ class select_week(discord.ui.View):
         self.semaine -= 1
 
         if self.semaine < 0:
-            embed = discord.Embed(
-                title="Aucune khôlle cette semaine",
-                description="Tu n'as pas de khôlles prévues pour cette semaine.",
-                colour=discord.Colour.green()
-            )
-            embed.set_footer(text="MP2I >>>> MPSI")
-            embed.set_thumbnail(
-                url=url)
-
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
+            return no_kholles_embed
 
 
         embed = await gen_kholle(semaine=self.semaine, user_id = interaction.user.id)
@@ -442,11 +429,18 @@ async def send_reminder_2days_before():
         if not embed:
             continue
         # To send dms, the app needs to be a bot, not just an app.
+        await user.send(embed=embed)
+
+async def send_reminder_sameday():
+    for member in data["Members"]:
+        if data["Members"][member]["reminder"] != "True":
+            return
+        user = await bot.fetch_user(member)
+        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,colour=discord.Colour.green(), custom_char="pour aujourd'hui, bonne chance ! ", delta_day=0)
         if not embed:
             continue
         # To send dms, the app needs to be a bot, not just an app.
         await user.send(embed=embed)
-
 
 class Select_group(discord.ui.View):
     def __init__(self):
