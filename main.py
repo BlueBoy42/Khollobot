@@ -176,8 +176,25 @@ def kholles_semaines(user_id: int, semaine: int = semaine_actuelle()) -> list:
     user_khôlles = sorted(user_khôlles, key=lambda x: day_to_num[x["jour"]])
     return user_khôlles
 
-async def gen_kholle(user_id:int, semaine: int = semaine_actuelle()):
-    user_khôlles = kholles_semaines(user_id,semaine)
+async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple()):
+    """Dynamicly generates user's colles
+
+    Args:
+        user_id (int): User id
+        semaine (int, optional): Change the generated kholle's week. Defaults to semaine_actuelle().
+        custom_char (str, optional): Edit the message sent. Defaults to "".
+        delta_day (int, optional): The delta day of kholles that we want to be appearing (For reminders). Defaults to -1.
+        colour (discord.Colour, optional) : Embeds color. Default to discord.Colour.purple()
+    Returns:
+        Discord Embed 
+    """
+    today = datetime.date.today().timetuple().tm_wday
+    if delta_day == 2 and today in [5,6]: # If were on saturday or sunday, consider next week
+        user_khôlles = kholles_semaines(user_id, semaine_actuelle()+1)
+        target_day = (today + 2) % 7
+    else:
+        user_khôlles = kholles_semaines(user_id, semaine)
+        target_day = None
     if not user_khôlles:
         embed = discord.Embed(
             title="Aucune khôlle cette semaine",
@@ -191,10 +208,18 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle()):
 
     embed = discord.Embed(
         title=f"Tes khôlles pour la semaine",
-        description=f"Salut, {data["Members"][str(user_id)]["name"].split(" ")[1]}, voici les khôlles que tu as pour la S_{semaine} (Semaine {semaine_collometre[semaine]} de l'année) : ",
-        colour=discord.Colour.purple()
+        description=f"Salut, {data["Members"][str(user_id)]["name"].split(" ")[1]}, voici les khôlles que tu as {f"pour la S_{semaine} (Semaine {semaine_collometre[semaine]} de l'année)" if not custom_char else custom_char} : ",
+        colour=colour
     )
     for kholle in user_khôlles:
+        if target_day is not None:
+            if day_to_num[kholle["jour"]] != target_day:
+                continue
+        elif delta_day!=-1:
+            print(day_to_num[kholle["jour"]] - today != delta_day)
+            print(kholle["matiere"])
+            if day_to_num[kholle["jour"]] - today != delta_day: # If delta day and day not in specified range
+                continue
         kholle_info = ""
         if "Info" in kholle["matiere"]:
             kholle_info = "**\n[Programme de khôlle](https://nussbaumcpge.be/static/MP2I/pgme.pdf)**"
@@ -208,6 +233,10 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle()):
             name=f"{kholle['matiere']} avec {kholle['colleur']}",
             value=f"```\nLe {kholle['jour']} à {kholle['heure']}.\n" +  (f"En salle : {kholle['salle']}\n" if kholle['salle'] else "") + "```" + kholle_info,
         )
+        if delta_day!=-1:
+            print(embed.fields)
+    if embed.fields == []:
+        return 
     return embed
 
 @bot.event
@@ -399,6 +428,8 @@ async def send_reminder_saturday():
         embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,)
 
         # To send dms, the app needs to be a bot, not just an app.
+        if not embed:
+            continue
         await user.send(embed=embed)
 
 
@@ -407,29 +438,11 @@ async def send_reminder_2days_before():
         if data["Members"][member]["reminder"] != "True":
             return
         user = await bot.fetch_user(member)
-        today = datetime.date.today().timetuple().tm_wday
-        if today in [5,6]: # If were on saturday or sunday, consider next week
-            user_khôlles = kholles_semaines(member, semaine_actuelle()+1)
-        else:
-            user_khôlles = kholles_semaines(member, semaine_actuelle())
-        embed = discord.Embed(
-            title=f"Rappel de ta khôlle",
-            description=f"Salut {data["Members"][member]["name"].split(" ")[1]}, voici la khôlle que tu as pour après demain, prépare la bien ! : ",
-            colour=discord.Colour.red()
-        )
-        for kholle in user_khôlles:
-            weekend_condition = None
-            if today in (5,6): # Weekend
-                weekend_condition = day_to_num[kholle['jour']] - today == -5
-            if day_to_num[kholle['jour']] - today == 2 or weekend_condition:
-                embed.add_field(
-                    name=f"{kholle['matiere']} avec {kholle['colleur']}",
-                    value=f"```\nLe {kholle['jour']} à {kholle['heure']}```",
-                )
-        embed.set_footer(text="MP2I >>>> MPSI")
-        embed.set_thumbnail(
-            url=url)
-        if embed.fields == []:
+        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,colour=discord.Colour.red(), custom_char="pour après demain, prépare la bien ! ", delta_day=2)
+        if not embed:
+            continue
+        # To send dms, the app needs to be a bot, not just an app.
+        if not embed:
             continue
         # To send dms, the app needs to be a bot, not just an app.
         await user.send(embed=embed)
