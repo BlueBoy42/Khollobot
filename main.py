@@ -185,7 +185,7 @@ def kholles_semaines(user_id: int, semaine: int = semaine_actuelle()) -> list:
     user_khôlles = sorted(user_khôlles, key=lambda x: day_to_num[x["jour"]])
     return user_khôlles
 
-async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple()):
+async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple(), title:str=""):
     """Dynamicly generates user's colles
 
     Args:
@@ -194,6 +194,7 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
         custom_char (str, optional): Edit the message sent. Defaults to "".
         delta_day (int, optional): The delta day of kholles that we want to be appearing (For reminders). Defaults to -1.
         colour (discord.Colour, optional) : Embeds color. Default to discord.Colour.purple()
+        title (str, optional) : Embeds title.
     Returns:
         Discord Embed 
     """
@@ -207,7 +208,7 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
     if not user_khôlles:
         return no_kholles_embed
     embed = discord.Embed(
-        title=f"Tes khôlles pour la semaine",
+        title="Tes khôlles pour la semaine" if title != "" else title,
         description=f"Salut, {data["Members"][str(user_id)]["name"].split(" ")[1]}, voici les khôlles que tu as {f"pour la S_{semaine} (Semaine {semaine_collometre[semaine]} de l'année)" if not custom_char else custom_char} : ",
         colour=colour
     )
@@ -412,7 +413,7 @@ async def send_reminder_saturday():
             return
         user = await bot.fetch_user(member)
 
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,)
+        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,title="Tes kholles pour la semaine prochaine")
 
         # To send dms, the app needs to be a bot, not just an app.
         if not embed:
@@ -425,7 +426,7 @@ async def send_reminder_2days_before():
         if data["Members"][member]["reminder"] != "True":
             return
         user = await bot.fetch_user(member)
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.red(), custom_char="pour après demain, prépare la bien ! ", delta_day=2)
+        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.red(), custom_char="pour après demain, prépare la bien ! ", delta_day=2, title="Ta kholle pour demain")
         if not embed:
             continue
         # To send dms, the app needs to be a bot, not just an app.
@@ -436,7 +437,7 @@ async def send_reminder_sameday():
         if data["Members"][member]["reminder"] != "True":
             return
         user = await bot.fetch_user(member)
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.green(), custom_char="pour aujourd'hui, bonne chance ! ", delta_day=0)
+        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.green(), custom_char="pour aujourd'hui, bonne chance ! ", delta_day=0, title="Ta kholle pour aujourd'hui")
         if not embed:
             continue
         # To send dms, the app needs to be a bot, not just an app.
