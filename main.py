@@ -208,7 +208,7 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
     if not user_khôlles:
         return no_kholles_embed
     embed = discord.Embed(
-        title="Tes khôlles pour la semaine" if title != "" else title,
+        title="Tes khôlles pour la semaine" if title == "" else title,
         description=f"Salut, {data["Members"][str(user_id)]["name"].split(" ")[1]}, voici les khôlles que tu as {f"pour la S_{semaine} (Semaine {semaine_collometre[semaine]} de l'année)" if not custom_char else custom_char} : ",
         colour=colour
     )
