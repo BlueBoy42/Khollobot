@@ -408,6 +408,13 @@ async def send_reminder_saturday():
     #Send a remainder every saturday for next week khôlles
     if not (datetime.date.today().timetuple().tm_wday == 5):
         return
+    
+    # If not school week dont send any message (for holidays)
+    current_iso_week = datetime.date.today().isocalendar()[1]
+    is_school_week = any(iso_week == current_iso_week for iso_week in semaine_collometre.values())
+    if not is_school_week:
+        return
+    
     for member in data["Members"]:
         if data["Members"][member]["reminder"] != "True":
             continue
@@ -422,6 +429,12 @@ async def send_reminder_saturday():
 
 
 async def send_reminder_2days_before():
+    # If not school week dont send any message (for holidays)
+    current_iso_week = datetime.date.today().isocalendar()[1]
+    is_school_week = any(iso_week == current_iso_week for iso_week in semaine_collometre.values())
+    if not is_school_week:
+        return
+    
     for member in data["Members"]:
         if data["Members"][member]["reminder"] != "True":
             continue
@@ -433,6 +446,12 @@ async def send_reminder_2days_before():
         await user.send(embed=embed)
 
 async def send_reminder_sameday():
+    # If not school week dont send any message (for holidays)s
+    current_iso_week = datetime.date.today().isocalendar()[1]
+    is_school_week = any(iso_week == current_iso_week for iso_week in semaine_collometre.values())
+    if not is_school_week:
+        return
+    
     for member in data["Members"]:
         if data["Members"][member]["reminder"] != "True":
             continue
