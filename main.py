@@ -1,6 +1,5 @@
 import discord
 from discord import app_commands
-import pandas as pd
 import json
 import datetime
 from datetime import timedelta
@@ -9,6 +8,7 @@ from discord.ext import tasks
 from ics import Calendar, Event
 import io
 import os
+import csv
 
 with open("data.json", "r") as f:
     data = json.load(f)
@@ -38,7 +38,14 @@ no_kholles_embed.set_thumbnail(
 
 
 def semaine_S():
-    """Donne le dictionnaire de correspondance sur le colomètre ou None si elle n'y est pas"""
+    """Donne le dictionnaire de correspondance sur le colomètre ou None si elle n'y est pas
+    Note: Maintenant calculé automatiquement depuis le CSV dans get_kholles()
+    """
+    # Si semaine_collometre est déjà rempli par get_kholles(), on ne fait rien
+    if semaine_collometre:
+        return
+    
+    # Sinon, calcul classique (fallback)
     holidays = []
 
     # Année de début de la periode scolaire, à changer chaque année
@@ -93,96 +100,115 @@ day_to_num = {
 
 
 def get_kholles():
-    """Func that reads the collomètre and returns a tuple of (group, khôlles)
-    TODO Make it also tell which group as what half group classes
-    """
-    if not ("collomètre.xlsx" in os.listdir()):
-        print("Vous devez ajouter le fichier collomètre et le renommer en \"collomètre.xlsx\", sinon le bot ne pourra pas marcher !!")
+    """Charge les khôlles et groupes depuis le CSV unifié"""
+    if not os.path.exists("collometre_data.csv"):
+        print("Vous devez convertir votre collomètre !")
         exit()
 
-    df1 = pd.read_excel("collomètre.xlsx", sheet_name=0)
-    data_khôlles = df1.to_dict(orient="records")
+    global groups, khôlles
+    groups = []
+    khôlles = {}
     
-
-    df2 = pd.read_excel("collomètre.xlsx", sheet_name=1)
-    data_groups = df2.to_dict(orient="records")
-
-    current_matiere = None
-
-    # Use the first page to get the khôlles
-    for row in data_khôlles:
-        if pd.notna(row['Matière']) and pd.isna(row['Colleur']):
-            # Ignore the half-class groups
-            if "Groupes demi-classe" in row['Matière']:
-                current_matiere = None
+    with open("collometre_data.csv", 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        mode = None
+        
+        for row in reader:
+            if not row or not row[0]:
                 continue
-            current_matiere = row['Matière']
-            continue
-
-        if pd.notna(row['Colleur']) and current_matiere:
-            colleur = row['Colleur']
-            jour = row['Jour'] if pd.notna(row['Jour']) else None
-            heure = row['Heure'] if pd.notna(row['Heure']) else None
-            salle = row['Salle'] if pd.notna(row['Salle']) else None
-
-            for semaine in range(16):
-                col_name = f'S{semaine}'
-                if pd.notna(row[col_name]):
-                    group_id = int(row[col_name]) if isinstance(
-                        row[col_name], (int, float)) else row[col_name]
-
-                    key = f"{group_id}_S{semaine}"
-
-                    semaine_from_key = int(key.split("_S")[-1])
-                    key_semaine = "S_" + str(semaine_from_key)
-                    if key_semaine not in khôlles:
-                        khôlles[key_semaine] = []
-                    khôlles[key_semaine].append({
-                        "group_id": group_id,
-                        "matiere": current_matiere,
-                        "colleur": colleur,
-                        "jour": jour,
-                        "heure": heure,
-                        "semaine": semaine_from_key,
-                        "salle": salle
-                    })
-
-    # Use the second page to get the groups
-    for row in data_groups[2:]:
-        if pd.notna(row['Unnamed: 0']):
-            group_a = {
-                "group_id": int(row['Unnamed: 0']),
-                "membres": []
-            }
-            for col in ['Unnamed: 1', 'Unnamed: 2', 'Unnamed: 3']:
-                if pd.notna(row[col]):
-                    group_a["membres"].append(row[col])
-            groups.append(group_a)
-
-        if pd.notna(row['Unnamed: 4']):
-            group_b = {
-                "group_id": int(row['Unnamed: 4']),
-                "membres": []
-            }
-            for col in ['Unnamed: 5', 'Unnamed: 6', 'Unnamed: 7']:
-                if pd.notna(row[col]):
-                    group_b["membres"].append(row[col])
-            groups.append(group_b)
+            
+            # Détecter la section
+            if row[0] == '[GROUPES]':
+                mode = 'groupes'
+                next(reader)  # Skip header
+                continue
+            elif row[0] == '[KHOLLES]':
+                mode = 'kholles'
+                next(reader)  # Skip header
+                continue
+            
+            # Lire les groupes
+            if mode == 'groupes':
+                groups.append({
+                    'group_id': int(row[0]),
+                    'membres': [row[1], row[2], row[3]] if len(row) >= 4 else []
+                })
+            
+            # Lire les khôlles
+            elif mode == 'kholles':
+                semaine_kholle = int(row[5])
+                semaine_iso = int(row[6])
+                
+                # Utiliser semaine_kholle pour la clé (S0-S15 ou S16-S31)
+                key_semaine = f"S_{semaine_kholle}"
+                
+                if key_semaine not in khôlles:
+                    khôlles[key_semaine] = []
+                
+                kholle_data = {
+                    'matiere': row[0],
+                    'colleur': row[1],
+                    'jour': row[2],
+                    'heure': row[3],
+                    'salle': row[4],
+                    'semaine': semaine_kholle,  # S0-S15 ou S16-S31
+                    'semaine_iso': semaine_iso,  # Semaine ISO réelle
+                    'group_id': int(row[7]) if row[7].isdecimal() else 0
+                }
+                if kholle_data['group_id'] == 0 :
+                    continue
+                # Ajouter couleur et note si présentes
+                if len(row) > 8 and row[8]:
+                    kholle_data['couleur'] = row[8]
+                if len(row) > 9 and row[9]:
+                    kholle_data['note'] = row[9]
+                
+                khôlles[key_semaine].append(kholle_data)
+    
+    # Construire le mapping semaine_collometre automatiquement
+    global semaine_collometre
+    semaine_collometre = {}
+    for key in sorted(khôlles.keys(), key=lambda x: int(x.split('_')[1])):
+        semaine_num = int(key.split('_')[1])
+        if khôlles[key]:
+            semaine_iso = khôlles[key][0]['semaine_iso']
+            # Gérer les deux semestres
+            if semaine_num >= 16:
+                # Semestre 2: S16 = index 0 du semestre 2
+                semaine_collometre[semaine_num - 16] = semaine_iso
+            else:
+                # Semestre 1: S0 = index 0
+                semaine_collometre[semaine_num] = semaine_iso
     return groups, khôlles
 
 
 def kholles_semaines(user_id: int, semaine: int = semaine_actuelle()) -> list:
+    """Sends the week's khôlles for a user_id
+    
+    Args:
+        semaine: Index de la semaine (0-15, cherchera S0-S15 ou S16-S31 automatiquement)
     """
-    Sends the week's khôlles for a user_id
-    If semaine is not given use the current week"""
     user_data = data["Members"][str(user_id)]
     user_group_id = user_data["group_id"]
 
     user_khôlles = []
-    for kholle in khôlles[f"S_{semaine}"]:
-        if kholle["group_id"] == user_group_id:
-            user_khôlles.append(kholle)
-    user_khôlles = sorted(user_khôlles, key=lambda x: day_to_num[x["jour"]])
+    
+    # Chercher d'abord dans le semestre 1 (S0-S15)
+    key_s1 = f"S_{semaine}"
+    if key_s1 in khôlles:
+        for kholle in khôlles[key_s1]:
+            if kholle["group_id"] == user_group_id:
+                user_khôlles.append(kholle)
+    
+    # Si pas trouvé, chercher dans le semestre 2 (S16-S31)
+    if not user_khôlles:
+        key_s2 = f"S_{semaine + 16}"
+        if key_s2 in khôlles:
+            for kholle in khôlles[key_s2]:
+                if kholle["group_id"] == user_group_id:
+                    user_khôlles.append(kholle)
+    
+    user_khôlles = sorted(user_khôlles, key=lambda x: day_to_num.get(x["jour"], 0))
     return user_khôlles
 
 async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple(), title:str=""):
@@ -228,10 +254,20 @@ async def gen_kholle(user_id:int, semaine: int = semaine_actuelle(), custom_char
             kholle_info = "**\n[Programme de khôlle de maths                  ](https://cahier-de-prepa.fr/mp2i-thiers/docs?rep=331)**"
         if "Physique" in kholle["matiere"]:
             kholle_info = "**\n[Programme de khôlle de physique](https://cahier-de-prepa.fr/mp2i-thiers/docs?rep=329)**"
+        field_value = f"```\nLe {kholle['jour']} à {kholle['heure']}.\n"
+        if kholle.get('salle'):
+            field_value += f"En salle : {kholle['salle']}\n"
+        field_value += "```"
+        field_value += kholle_info
+        
+        # Ajouter
+        if kholle.get('note'):
+            field_value += f"\n NOTE (IMPORTANT) **{kholle['note']}**"
+        
         embed.add_field(
             name=f"{kholle['matiere']} avec {kholle['colleur']}",
-            value=f"```\nLe {kholle['jour']} à {kholle['heure']}.\n" +  (f"En salle : {kholle['salle']}\n" if kholle['salle'] else "") + "```" + kholle_info,
-        )
+            value=field_value,
+        )    
     if embed.fields == []:
         return 
     return embed

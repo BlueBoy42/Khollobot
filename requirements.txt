@@ -2,3 +2,4 @@ discord.py
 pandas
 openpyxl
 ics
+pytz
