@@ -44,8 +44,7 @@ def semaine_S():
     # Si semaine_collometre est déjà rempli par get_kholles(), on ne fait rien
     if semaine_collometre:
         return
-    
-    # Sinon, calcul classique (fallback)
+
     holidays = []
 
     # Année de début de la periode scolaire, à changer chaque année
@@ -154,13 +153,10 @@ def get_kholles():
                     'semaine': semaine_kholle,  # S0-S15 ou S16-S31
                     'semaine_iso': semaine_iso,  # Semaine ISO réelle
                     'group_id': int(row[7]) if row[7].isdecimal() else int(row[7][:-1]),
-                    'user_id' : -97+ord(row[7][-1:]) if not row[7].isdecimal() else None
+                    'user_id' : -ord("a")+ord(row[7][-1:]) if not row[7].isdecimal() else None
                 }
                 if kholle_data['group_id'] == 0 :
                     continue
-                # Ajouter couleur et note si présentes
-                if len(row) > 8 and row[8]:
-                    kholle_data['couleur'] = row[8]
                 if len(row) > 9 and row[9]:
                     kholle_data['note'] = row[9]
                 
