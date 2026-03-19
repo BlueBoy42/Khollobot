@@ -366,13 +366,13 @@ async def calendar_cmd(interaction: discord.Interaction):
             colle.location = kholle["salle"]
 
             #Calcul de la date de la colle
-            if semaine_collometre[kholle["semaine"]] > 33:
+            if kholle["semaine_iso"] > 33:
                 year = config["CurrentYear"]
             else :
                 year = config["CurrentYear"] + 1
             year_start = datetime.datetime(year, 1, 1, tzinfo=pytz.timezone('Europe/Paris'))
             #Premier jour de l'année + n° du jour de la colle - n° Jour de l'année + N° de la semaine de la colle -1 (on sait pas pourquoi -1, mais ça marche)
-            date = year_start + datetime.timedelta(days=day_to_num[kholle["jour"]] - year_start.weekday(), weeks=semaine_collometre[kholle["semaine"]]-1) 
+            date = year_start + datetime.timedelta(days=day_to_num[kholle["jour"]] - year_start.weekday(), weeks=kholle["semaine_iso"]-1) 
 
             if "-" in kholle["heure"]:
                 start, end = kholle["heure"].split("-")
