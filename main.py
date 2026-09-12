@@ -234,6 +234,9 @@ async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:
         )    
     if embed.fields == []:
         return 
+    embed.set_footer(text="MP2I >>>> MPSI")
+    embed.set_thumbnail(
+            url=url)
     return embed
 
 

@@ -24,14 +24,20 @@ def semaine_S():
     
     year = config["CurrentYear"]
     for event in zoneB.events:
-        date = event.begin.datetime.replace(tzinfo=None)
-        if ("Vacances" in event.name) and (datetime.datetime(year, 9, 1) <= date < datetime.datetime(year + 1, 8, 25)):
-            holidays.append(int(event.begin.datetime.strftime('%W'))+2)
-            holidays.append(int(event.end.datetime.strftime('%W')))
-    
+        if "Vacances" not in event.name:
+            continue
+
+        start = event.begin.datetime.replace(tzinfo=None)
+        end = event.end.datetime.replace(tzinfo=None)
+
+        current = start
+
+        while current <= end:
+            holidays.append(int(current.strftime('%W')))
+            current += datetime.timedelta(days=7)
     week = config["FirstColleWeek"]
     nb = 0
-    while nb <= 15:
+    while nb <= 31:
         if not ((week) in holidays):
             semaine_collometre[nb] = week
             nb += 1
@@ -88,7 +94,17 @@ def get_kholles_format1(filepath):
                     
                     group_id = int(group_id) if isinstance(group_id, (int, float)) else group_id
                     semaine_kholle = semaine + offset
-                    semaine_iso = semaine_collometre.get(semaine, semaine + config["FirstColleWeek"])
+                    real_week = semaine + offset
+
+                    if semester == 2:
+                        lookup_week = semaine
+                    else:
+                        lookup_week = semaine
+
+                    semaine_iso = semaine_collometre.get(
+                        lookup_week,
+                        config["FirstColleWeek"] + lookup_week
+                    )
                     
                     key_semaine = f"S_{semaine_kholle}"
                     if key_semaine not in khôlles:
@@ -194,7 +210,75 @@ def get_kholles_format2(filepath):
                 "eleve3": row['eleve3'] if pd.notna(row.get('eleve3')) != None else ''
             }
             groups.append(groupe)
-    
+
+    return groups, khôlles
+
+
+def get_kholles_format3(filepath):
+    """Convertit le nouveau format S0-S15 avec la feuille Feuille2."""
+    df1 = pd.read_excel(filepath, sheet_name='Semaines')
+    workbook = pd.ExcelFile(filepath)
+    group_sheet = next(
+        (name for name in ('Feuille 2', 'Feuille2') if name in workbook.sheet_names),
+        None
+    )
+    df2 = pd.read_excel(filepath, sheet_name=group_sheet, header=None)
+
+    semester = detect_semester(df1)
+    offset = 0 if semester == 1 else 16
+    week_cols = [
+        (idx, col) for idx, col in enumerate(df1.columns)
+        if isinstance(col, str) and col.upper().startswith('S')
+        and col[1:].isdigit()
+    ]
+
+    current_matiere = None
+    for row in df1.to_dict(orient="records"):
+        if pd.notna(row['Matière']) and pd.isna(row['Colleur']):
+            current_matiere = row['Matière']
+            continue
+
+        if pd.notna(row['Colleur']) and current_matiere:
+            for s_idx, (col_idx, _) in enumerate(week_cols):
+                col_name = df1.columns[col_idx]
+                group_id = row[col_name]
+                if pd.isna(group_id) or group_id in ["p", "P", "i", "I"]:
+                    continue
+
+                kholle = {
+                    "group_id": int(group_id) if isinstance(group_id, (int, float)) else group_id,
+                    "matiere": current_matiere,
+                    "colleur": row['Colleur'],
+                    "jour": row['Jour'] if pd.notna(row['Jour']) else '',
+                    "heure": row['Heure'] if pd.notna(row['Heure']) else '',
+                    "semaine": s_idx + offset,
+                    "semaine_iso": semaine_collometre.get(
+                        s_idx, config["FirstColleWeek"] + s_idx
+                    ),
+                    "salle": '',
+                    "note": ''
+                }
+                khôlles.setdefault(f"S_{s_idx + offset}", []).append(kholle)
+
+    for row in df2.itertuples(index=False, name=None):
+        group_id = row[0] if row else None
+        if pd.isna(group_id):
+            continue
+        try:
+            group_id = int(group_id)
+        except (TypeError, ValueError):
+            continue
+        members = [
+            '' if len(row) <= index or pd.isna(row[index]) else str(row[index]).strip()
+            for index in range(1, 4)
+        ]
+        groups.append({
+            "group_id": group_id,
+            "eleve1": members[0],
+            "eleve2": members[1],
+            "eleve3": members[2]
+        })
+
     return groups, khôlles
 
 
@@ -205,6 +289,8 @@ def detect_format(filepath):
     
     if 'Collomètre' in sheet_names:
         return 'format1'
+    if 'Semaines' in sheet_names and ('Feuille 2' in sheet_names or 'Feuille2' in sheet_names):
+        return 'format3'
     # Yes it is hardcodded, but i'll add any other format
     if 'Semaines' in sheet_names:
         return 'format2'
@@ -240,6 +326,9 @@ def save_csv(groups, khôlles, output_file):
 
 def convert_collometre(input_file):
     """Fonction principale de conversion"""
+    groups.clear()
+    khôlles.clear()
+    semaine_collometre.clear()
     semaine_S()
 
     format_type = detect_format(input_file)
@@ -249,6 +338,8 @@ def convert_collometre(input_file):
     
     if format_type == 'format1':
         groups_data, kholles_data = get_kholles_format1(input_file)
+    elif format_type == 'format3':
+        groups_data, kholles_data = get_kholles_format3(input_file)
     else:
         groups_data, kholles_data = get_kholles_format2(input_file)
     
