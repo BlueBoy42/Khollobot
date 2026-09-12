@@ -139,7 +139,7 @@ def convert_collometre(input_file):
 
     groups_data, kholles_data = get_kholles()
     
-    save_csv(groups_data, kholles_data, "collometre_data.csv")
+    save_csv(groups_data, kholles_data, "MPI_data.csv")
     
     return True
 
