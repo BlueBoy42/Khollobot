@@ -1,4 +1,6 @@
-collomètre*.xlsx
+*.xlsx
 data.json
 token.txt
-collometre_data.csv
+*.pdf
+*.csv
+*.csv#
