@@ -343,7 +343,7 @@ def convert_collometre(input_file):
     else:
         groups_data, kholles_data = get_kholles_format2(input_file)
     
-    save_csv(groups_data, kholles_data, "collometre_data.csv")
+    save_csv(groups_data, kholles_data, "MP2I_data.csv")
     
     return True
 
