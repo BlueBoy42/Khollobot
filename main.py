@@ -29,6 +29,7 @@ global holidays_iso
 groups = {"MP2I":[], "MPI":[]}
 kholles = {"MP2I":{},"MPI":{}}
 holidays_iso = []
+reminders_sent_on = None
 
 no_kholles_embed = discord.Embed(
     title="Aucune khôlle cette semaine",
@@ -46,31 +47,27 @@ def holidays_weeks():
     if holidays_iso:
         return
 
-    # Année de début de la periode scolaire, à changer chaque année
     year = config["CurrentYear"]
     for event in zoneB.events:
-        date = event.begin.datetime.replace(tzinfo=None)
-        if ("Vacances" in event.name) and (datetime.datetime(year, 9, 1) <= date < datetime.datetime(year + 1, 8, 25)):
-            # La 1ere semaine de chaque vacance (+1 car les vacances débutent le vendredi)
-            holidays_iso.append(int(event.begin.datetime.strftime('%W'))+1)
-            holidays_iso.append(int(event.end.datetime.strftime('%W')))
+        if "Vacances" not in event.name:
+            continue
+        start = event.begin.datetime.replace(tzinfo=None)
+        end = event.end.datetime.replace(tzinfo=None)
+        if not (datetime.datetime(year, 9, 1) <= start < datetime.datetime(year + 1, 8, 25)):
+            continue
+        current = start.date()
+        while current <= end.date():
+            holidays_iso.append(current.isocalendar().week)
+            current += datetime.timedelta(days=1)
+    holidays_iso[:] = sorted(set(holidays_iso))
+    print(f"Semaines de vacances détectées par Zone-B.ics: {holidays_iso}")
 
 
 def semaine_actuelle() -> int:
-    """Renvoie l'iso de cette semaine, 
-    ou la prochaine s'il n'y a pas cours cette semaine.
-    """
+    """Renvoie le numéro ISO de la semaine courante."""
     if not holidays_iso:
         holidays_weeks()
-    current_iso_week = datetime.date.today().isocalendar()[1]
-    if not (current_iso_week in holidays_iso):
-        return current_iso_week
-    else: #renvoie la prochaine semaine hors vacance
-        nexts_week = datetime.date.today() + datetime.timedelta(days=7)
-        while nexts_week.isocalendar()[1] in holidays_iso:
-            nexts_week = nexts_week + datetime.timedelta(days=7)
-        return nexts_week.isocalendar()[1]
-    return 0
+    return datetime.date.today().isocalendar()[1]
 
 
 day_to_num = {
@@ -88,11 +85,14 @@ def get_kholles(group_class):
     """Charge les kholles et groupes depuis le CSV correspondant à la classe entrée
     group_class = "MPI" ou "MP2I"
     """
-    if not os.path.exists(f"{group_class}_data.csv"):
+    data_file = f"{group_class.lower()}_data.csv"
+    if not os.path.exists(data_file):
+        data_file = f"{group_class}_data.csv"
+    if not os.path.exists(data_file):
         print(f"Vous devez convertir le collomètre de {group_class}!")
         exit()
     
-    with open(f"{group_class}_data.csv", 'r', encoding='utf-8') as f:
+    with open(data_file, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
         mode = None
         
@@ -138,8 +138,9 @@ def get_kholles(group_class):
                     'salle': row[4],
                     'semaine': semaine_kholle,  # Celle indiquée sur le collomètre
                     'semaine_iso': semaine_iso,  # Semaine ISO réelle
-                    'group_id': int(row[7]) if row[7].isdecimal() else int(row[7][:-1]),
-                    'user_id' : -ord("a")+ord(row[7][-1:]) if not row[7].isdecimal() else None
+                    'group_id': int(row[7]) if row[7].isdecimal() else int(row[7][:-2]),
+                    'member_letter': row[7][-1].lower() if not row[7].isdecimal() else None,
+                    'user_id': ord(row[7][-1].lower()) - ord("a") if not row[7].isdecimal() else None
                 }
                 if kholle_data['group_id'] == None :
                     continue
@@ -161,16 +162,38 @@ def kholles_semaines(user_id: int, semaine: int = semaine_actuelle()) -> list:
     user_group_id = user_data["group_id"]
     user_class = user_data["class"]
 
+    current_week = datetime.date.today().isocalendar()[1]
+    if semaine == current_week and current_week in holidays_iso:
+        return []
+
     user_kholles = []
     if semaine in kholles[user_class]:
         for kholle in kholles[user_class][semaine]:
-            if kholle["group_id"] == user_group_id:
-                user_kholles.append(kholle)
+            if kholle["group_id"] != user_group_id:
+                continue
+
+            if "Français" in kholle["matiere"] and user_class == "MP2I":
+                group = next(
+                    (group for group in groups[user_class]
+                     if group["group_id"] == user_group_id),
+                    None
+                )
+                if group is None:
+                    continue
+                member_index = next(
+                    (index for index, member in enumerate(group["membres"])
+                     if member == user_data["name"]),
+                    None
+                )
+                if member_index != kholle.get("user_id"):
+                    continue
+
+            user_kholles.append(kholle)
     
     user_kholles = sorted(user_kholles, key=lambda x: day_to_num.get(x["jour"], 0))
     return user_kholles
 
-async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple(), title:str=""):
+async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:str="", delta_day:int = -1, colour=discord.Colour.purple(), title:str="", target_date=None):
     """Dynamicly generates user's colles
 
     Args:
@@ -183,20 +206,27 @@ async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:
     Returns:
         Discord Embed 
     """
-    today = datetime.date.today().timetuple().tm_wday
-    if delta_day == 2 and today in [5,6]: # If were on saturday or sunday, consider next week
-        user_kholles = kholles_semaines(user_id, semaine_actuelle()+1)
-        target_day = (today + 2) % 7
+    today = datetime.date.today().weekday()
+    if target_date is not None:
+        user_kholles = [
+            kholle for kholle in kholles_semaines(
+                user_id, target_date.isocalendar().week
+            )
+            if day_to_num.get(kholle["jour"]) == target_date.weekday()
+        ]
+        target_day = None
     else:
         user_kholles = kholles_semaines(user_id, semaine)
-        target_day = None
+        target_day = (today + 2) % 7 if delta_day == 2 and today >= 5 else None
     if not user_kholles:
         return no_kholles_embed
+    week_label = f"(Semaine {semaine} de l'année)" if not custom_char else custom_char
     embed = discord.Embed(
         title="Tes khôlles pour la semaine" if title == "" else title,
-        description=f"Salut, {data["Members"][str(user_id)]["name"]}, voici les khôlles que tu as {f"(Semaine {semaine} de l'année)" if not custom_char else custom_char} : ",
+        description=f"Salut, {data['Members'][str(user_id)]['name']}, voici les khôlles que tu as {week_label} : ",
         colour=colour
     )
+    embed.set_footer(text="MP2I >>>> MPSI")
     for kholle in user_kholles:
         if target_day is not None:
             if day_to_num[kholle["jour"]] != target_day:
@@ -208,15 +238,19 @@ async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:
         match kholle["matiere"][0]:
             case "I":
                 if data["Members"][str(user_id)]["class"] == "MP2I":
-                    kholle_info = f"**\n[Programme de khôlle](https://nussbaumcpge.be/static/MP2I/pgme.pdf)**"  
-                if data["Members"][str(user_id)]["class"] == "MPI":
+                    kholle_info = f"**\n[Programme de khôlle](https://nussbaumcpge.be/static/MP2I/pgme.pdf)**"
+                elif data["Members"][str(user_id)]["class"] == "MPI":
                     kholle_info = "**\n[Programme de khôlle](https://cahier-de-prepa.fr/mpi*-thiers/progcolles?Info)**"
             case "M":
                 if data["Members"][str(user_id)]["class"] == "MPI":
                     kholle_info = "**\n[Programme de khôlle](https://cahier-de-prepa.fr/mpi*-thiers/progcolles?Math%C3%A9matiques)**"
+                elif data["Members"][str(user_id)]["class"] == "MP2I":
+                    kholle_info = "**\n[Programme de khôlle](https://cahier-de-prepa.fr/mp2i-thiers/docs?rep=329)**"
             case "P":
                 if data["Members"][str(user_id)]["class"] == "MPI":
                     kholle_info = "**\n[Programme de khôlle](https://mchampion.fr/colles.php)**"
+                elif data["Members"][str(user_id)]["class"] == "MP2I":
+                    kholle_info = f"**\n[Programme de khôlle](https://cahier-de-prepa.fr/mp2i-thiers/docs?rep=329)**"
         
         field_value = f"```\nLe {kholle['jour']} à {kholle['heure']}.\n"
         if kholle.get('salle'):
@@ -228,13 +262,22 @@ async def gen_kholle(user_id:int, semaine:int = semaine_actuelle(), custom_char:
         if kholle.get('note'):
             field_value += f"\n NOTE (IMPORTANT) **{kholle['note']}**"
         
+        if "Français" in kholle.get('matiere') and data["Members"][str(user_id)]["class"] == "MP2I":
+            group = next(
+                (group for group in groups[data["Members"][str(user_id)]["class"]]
+                 if group["group_id"] == kholle["group_id"]),
+                None
+            )
+            kholle_name = f"Français pour ***{data['Members'][str(user_id)]['name']}***"
+        else:
+            kholle_name = kholle["matiere"]
         embed.add_field(
-            name=f"{kholle['matiere']} avec {kholle['colleur']}",
+            name=f"{kholle_name} avec {kholle['colleur']}",
             value=field_value,
-        )    
+        )
     if embed.fields == []:
         return 
-    embed.set_footer(text="MP2I >>>> MPSI")
+
     embed.set_thumbnail(
             url=url)
     return embed
@@ -245,9 +288,7 @@ async def on_ready():
     get_kholles("MP2I")
     get_kholles("MPI")
     holidays_weeks()
-    await send_reminder_saturday()
-    await send_reminder_2days_before()
-    await send_reminder_sameday()
+    await send_reminders()
     print(f'We have logged in as {bot.user}')
     await tree.sync(guild=None)
 
@@ -303,10 +344,24 @@ async def kholles_cmd(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    embed = await gen_kholle(user_id = interaction.user.id, semaine=semaine_actuelle())
+    today = datetime.date.today()
+    viewing_next_week = today.weekday() >= 5
+    displayed_week = (
+        (today + datetime.timedelta(days=7)).isocalendar().week
+        if viewing_next_week
+        else semaine_actuelle()
+    )
+    embed = await gen_kholle(
+        user_id=interaction.user.id,
+        semaine=displayed_week,
+        custom_char="pour la semaine prochaine" if viewing_next_week else "",
+        title="Tes khôlles pour la semaine prochaine" if viewing_next_week else ""
+    )
     if not embed:
         embed = no_kholles_embed
-    await interaction.response.send_message(embed=embed, ephemeral=True, view=select_week())
+    view = select_week()
+    view.semaine = displayed_week
+    await interaction.response.send_message(embed=embed, ephemeral=True, view=view)
 
 @tree.command(name="calendrier", description="Créer un fichier ICS de tes colles")
 async def calendar_cmd(interaction: discord.Interaction):
@@ -428,63 +483,53 @@ class select_week(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-async def send_reminder_saturday():
-    #Send a remainder every saturday for next week kholles
-    if not (datetime.date.today().timetuple().tm_wday == 5):
+async def send_reminders():
+    """Envoie les rappels correspondant au jour du démarrage."""
+    global reminders_sent_on
+    today = datetime.date.today()
+    if reminders_sent_on == today:
         return
-    
-    # If not school week dont send any message (for holidays)
-    current_iso_week = datetime.date.today().isocalendar()[1]
-    is_school_week = not current_iso_week in holidays_iso
-    if not is_school_week:
-        return
-    
+    if today.weekday() == 5:
+        targets = [(today + datetime.timedelta(days=7), "la semaine prochaine", None)]
+    elif today.weekday() == 6:
+        targets = [(today + datetime.timedelta(days=2), "après-demain", discord.Colour.red())]
+    else:
+        targets = [
+            (today, "aujourd'hui", discord.Colour.green()),
+            (today + datetime.timedelta(days=1), "demain", discord.Colour.orange()),
+            (today + datetime.timedelta(days=2), "après-demain", discord.Colour.red()),
+        ]
+    print(targets)
     for member in data["Members"]:
+        print(data["Members"][member]["reminder"], type(data["Members"][member]["reminder"]))
         if data["Members"][member]["reminder"] != "True":
             continue
         user = await bot.fetch_user(member)
 
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle()+1,title="Tes kholles pour la semaine prochaine")
-
-        # To send dms, the app needs to be a bot, not just an app.
-        if not embed:
-            continue
-        await user.send(embed=embed)
-
-
-async def send_reminder_2days_before():
-    # If not school week dont send any message (for holidays)
-    current_iso_week = datetime.date.today().isocalendar()[1]
-    is_school_week = not current_iso_week in holidays_iso
-    if not is_school_week:
-        return
-    
-    for member in data["Members"]:
-        if data["Members"][member]["reminder"] != "True":
-            continue
-        user = await bot.fetch_user(member)
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.red(), custom_char="pour après demain, prépare la bien ! ", delta_day=2, title="Ta kholle pour après demain")
-        if not embed:
-            continue
-        # To send dms, the app needs to be a bot, not just an app.
-        await user.send(embed=embed)
-
-async def send_reminder_sameday():
-    # If not school week dont send any message (for holidays)s
-    current_iso_week = datetime.date.today().isocalendar()[1]
-    is_school_week = not current_iso_week in holidays_iso
-    if not is_school_week:
-        return
-    
-    for member in data["Members"]:
-        if data["Members"][member]["reminder"] != "True":
-            continue
-        user = await bot.fetch_user(member)
-        embed = await gen_kholle(user_id = member, semaine=semaine_actuelle(),colour=discord.Colour.green(), custom_char="pour aujourd'hui, bonne chance ! ", delta_day=0, title="Ta kholle pour aujourd'hui")
-        if not embed:
-            continue
-        # To send dms, the app needs to be a bot, not just an app.
-        await user.send(embed=embed)
+        for target_date, label, colour in targets:
+            if target_date.isocalendar().week in holidays_iso:
+                continue
+            if colour is None:
+                embed = await gen_kholle(
+                    user_id=member,
+                    semaine=target_date.isocalendar().week,
+                    title="Tes khôlles pour la semaine prochaine",
+                )
+            else:
+                embed = await gen_kholle(
+                    user_id=member,
+                    colour=colour,
+                    custom_char=f"pour {label}, bonne chance ! ",
+                    title=f"Ta khôlle pour {label}",
+                    target_date=target_date,
+                )
+                print(
+                    f"Rappel {member} {target_date} ({label}): "
+                    f"{'envoyé' if embed is not no_kholles_embed else 'aucune colle'}"
+                )
+            if embed is not no_kholles_embed:
+                await user.send(embed=embed)
+    reminders_sent_on = today
 
 class Select_class(discord.ui.View):
     def __init__(self):
