@@ -19,30 +19,16 @@ semaine_collometre = {}
 
 
 def semaine_S():
-    """Donne le dictionnaire de correspondance sur le collomètre ou None si elle n'y est pas"""
-    holidays = []
-    
+    """Associe S0, S1, etc. aux semaines ISO successives du colloscope."""
     year = config["CurrentYear"]
-    for event in zoneB.events:
-        if "Vacances" not in event.name:
-            continue
+    week = config.get("FirstColleWeekMP2I")
+    if week is None:
+        raise KeyError("FirstColleWeek")
 
-        start = event.begin.datetime.replace(tzinfo=None)
-        end = event.end.datetime.replace(tzinfo=None)
-
-        current = start
-
-        while current <= end:
-            holidays.append(int(current.strftime('%W')))
-            current += datetime.timedelta(days=7)
-    week = config["FirstColleWeek"]
-    nb = 0
-    while nb <= 31:
-        if not ((week) in holidays):
-            semaine_collometre[nb] = week
-            nb += 1
+    for nb in range(32):
+        semaine_collometre[nb] = week
         week += 1
-        if week > int(datetime.datetime(year, 12, 31).strftime('%W')):
+        if week > datetime.date(year, 12, 28).isocalendar().week:
             week = 1
 
 
@@ -103,7 +89,7 @@ def get_kholles_format1(filepath):
 
                     semaine_iso = semaine_collometre.get(
                         lookup_week,
-                        config["FirstColleWeek"] + lookup_week
+                        config.get("FirstColleWeekMP2I") + lookup_week
                     )
                     
                     key_semaine = f"S_{semaine_kholle}"
@@ -253,7 +239,7 @@ def get_kholles_format3(filepath):
                     "heure": row['Heure'] if pd.notna(row['Heure']) else '',
                     "semaine": s_idx + offset,
                     "semaine_iso": semaine_collometre.get(
-                        s_idx, config["FirstColleWeek"] + s_idx
+                        s_idx, config.get("FirstColleWeekMP2I") + s_idx
                     ),
                     "salle": '',
                     "note": ''
@@ -343,7 +329,7 @@ def convert_collometre(input_file):
     else:
         groups_data, kholles_data = get_kholles_format2(input_file)
     
-    save_csv(groups_data, kholles_data, "MP2I_data.csv")
+    save_csv(groups_data, kholles_data, "mp2i_data.csv")
     
     return True
 
